@@ -35,6 +35,45 @@ class FK:
         ]) 
         return DH
 
+class IK:
+    def __init__(self, lengths):
+        self.L = lengths
+    def calc(self, xyz):
+        '''
+        Inverse kinematic model of leg, with angles theta(1;2;3)
+        L0: horizontal distance between the second joint (up down on hip) 
+        and the end effector
+        D:  absolute distance between the second joint (up down on
+        hip) and the end effector
+        Alpha: internal angle formed by the thigh and shin
+        Beta: Angle fored between end effector and horizontal about theta2
+        Gamma: Internal angle between thigh and end effector about theta2
+        '''
+        
+        Theta = u.zeros(3)
+        Theta[0] = m.atan2(xyz[1],xyz[0])
+        L0 = m.sqrt(xyz[0]**2+xyz[1]**2)-self.L[0]
+        D = m.sqrt(L0**2+xyz[2]**2)
+        Alpha = m.acos((-D**2 + self.L[1]**2+self.L[2]**2)/(2*self.L[1]*self.L[2]))
+        Beta = m.atan2(xyz[2], L0)
+        Gamma = m.asin(self.L[2]*m.sin(Alpha)/D)
+        Theta[1] = Gamma+Beta
+        Theta[2] = m.pi+Alpha
+
+        return Theta
+
+def rotate_z(theta, xyz, deg=False):
+    if deg:
+        theta = deg2rad(theta)
+
+    mat = u.array([[m.cos(theta),  m.sin(theta), 0],
+                   [-m.sin(theta), m.cos(theta), 0], 
+                   [0,0,1]])
+    xyz = u.array(xyz)
+    xyz = xyz.reshape((3,1))
+    return u.linalg.dot(mat, xyz)
+
+
 def deg2rad(input):
     return input*m.pi/180
 
