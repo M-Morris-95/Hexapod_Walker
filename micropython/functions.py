@@ -1,11 +1,30 @@
 import ulab as u
 import math as m
-from machine import SPI, Pin
+from machine import SPI, Pin, PWM
 import tinypico as TinyPICO
 import time, random, micropython
 import machine
 from ustruct import pack
 from math import pi
+
+def rotate_z(theta, xyz, deg=False):
+    if deg:
+        theta = deg2rad(theta)
+
+    mat = u.array([[m.cos(theta),  m.sin(theta), 0],
+                   [-m.sin(theta), m.cos(theta), 0], 
+                   [0,0,1]])
+    xyz = u.array(xyz)
+    xyz = xyz.reshape((3,1))
+    return u.linalg.dot(mat, xyz)
+
+
+def deg2rad(input):
+    return input*m.pi/180
+
+
+def rad2deg(input):
+    return 180*input/m.pi
 
 class FK:
     def __init__(self, lengths, theta_off = 0, r_off = 0):
@@ -35,9 +54,10 @@ class FK:
         ]) 
         return DH
 
-class IK:
-    def __init__(self, lengths):
+class Leg_IK:
+    def __init__(self, lengths, offset=0):
         self.L = lengths
+        self.offset = offset
     def calc(self, xyz):
         '''
         Inverse kinematic model of leg, with angles theta(1;2;3)
@@ -49,7 +69,10 @@ class IK:
         Beta: Angle fored between end effector and horizontal about theta2
         Gamma: Internal angle between thigh and end effector about theta2
         '''
-        
+
+        xyz = rotate_z(self.offset, xyz)
+        xyz = [xyz[0][0], xyz[1][0], xyz[2][0]]
+
         Theta = u.zeros(3)
         Theta[0] = m.atan2(xyz[1],xyz[0])
         L0 = m.sqrt(xyz[0]**2+xyz[1]**2)-self.L[0]
@@ -60,22 +83,36 @@ class IK:
         Theta[1] = Gamma+Beta
         Theta[2] = m.pi+Alpha
 
+        for i in range(3):
+            if Theta[i] > m.pi:
+                Theta[i] = Theta[i] - 2 * pi
+            if Theta[i] < -m.pi:
+                Theta[i] = Theta[i] + 2 * pi
+
         return Theta
+        
+class IK:
+    def __init__(self, lengths, offsets):
+        self.num_legs = len(offsets)
+        self.angles = u.zeros((self.num_legs, 3))
 
-def rotate_z(theta, xyz, deg=False):
-    if deg:
-        theta = deg2rad(theta)
+        self.legs = []
+        for offset in offsets:
+            self.legs.append(Leg_IK(lengths, offset))
+        
 
-    mat = u.array([[m.cos(theta),  m.sin(theta), 0],
-                   [-m.sin(theta), m.cos(theta), 0], 
-                   [0,0,1]])
-    xyz = u.array(xyz)
-    xyz = xyz.reshape((3,1))
-    return u.linalg.dot(mat, xyz)
+    def calc(self, xyz):
+        '''
+        pass a nx3 matrix containing leg positions 
+        '''
+
+        for i in range(self.num_legs):
+            self.angles[i]=self.legs[i].calc(xyz[i])
+        return(self.angles)
 
 
-def deg2rad(input):
-    return input*m.pi/180
+
+
 
 
 
@@ -91,14 +128,35 @@ class my_i2c:
         time.sleep_us(5)
         self.step = 200 / (pi / 2)
         for servo in range(16):
-            on_time = servo * 220
+            on_time =  servo = machine.PWM(machine.Pin(12), freq=50)
             off_time = on_time + 340
             self.i2c.writeto_mem(
                 self.slave, 0x06 + (servo * 4), pack("<HH", on_time, off_time)
             )
+        self.servo16 = PWM(Pin(4), freq=50, duty=77)
+        self.servo17 = PWM(Pin(14), freq=50, duty=77)
 
-    def set_servo(self, pos, servo):
-        on_time = servo * 220
-        off_time = on_time + 340 - int(pos * self.step)
-        # self.i2c.writeto_mem(0x40, 0x06 + (servo*4), pack('<HH', on_time, off_time))
-        self.i2c.writeto_mem(self.slave, 0x08 + (servo * 4), pack("<H", off_time))
+    def set_servo(self, pos, servo, degrees = False):
+        if degrees:
+            pos = deg2rad(pos)
+
+        if servo<16:
+            on_time = servo * 220
+            off_time = on_time + 340 - int(pos * self.step)
+            self.i2c.writeto_mem(self.slave, 0x08 + (servo * 4), pack("<H", off_time))
+
+        if servo == 16:
+            self.servo16.duty(77+int(104*pos/m.pi))
+
+        if servo == 17:
+            self.servo17.duty(77+int(104*pos/m.pi))
+
+
+class servo:
+    def __init__(self, pin):
+        self.my_servo = PWM(Pin(pin), freq=50, duty=77)
+        
+    def set_servo(self, pos, degrees = False):
+        if degrees:
+            pos = deg2rad(pos)
+        self.my_servo.duty(77+int(104*pos/m.pi))
